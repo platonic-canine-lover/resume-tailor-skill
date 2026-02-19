@@ -13,6 +13,7 @@ Usage:
 
 import asyncio
 import json
+from datetime import date
 from pathlib import Path
 from typing import Dict, List, Any
 from dataclasses import dataclass, asdict
@@ -61,7 +62,7 @@ class CategoryAgent:
         self.category = category
         self.jobs = jobs
         self.master_resume = master_resume
-        self.client = anthropic.Anthropic()
+        self.client = anthropic.AsyncAnthropic()
         
     async def analyze_job(self, job: JobPosting) -> Dict[str, Any]:
         """Analyze a single job posting to extract requirements and keywords"""
@@ -82,7 +83,7 @@ Job Description:
 Return analysis in JSON format with keys: required_skills, preferred_qualifications, 
 key_responsibilities, ats_keywords, action_verbs"""
 
-        message = self.client.messages.create(
+        message = await self.client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=1000,
             messages=[{"role": "user", "content": prompt}]
@@ -90,8 +91,17 @@ key_responsibilities, ats_keywords, action_verbs"""
         
         # Extract JSON from response
         response_text = message.content[0].text
-        # Parse JSON (add error handling in production)
-        analysis = json.loads(response_text)
+        # Try to extract JSON from the response (handle markdown code blocks)
+        try:
+            analysis = json.loads(response_text)
+        except json.JSONDecodeError:
+            # Try extracting JSON from markdown code block
+            import re
+            json_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', response_text)
+            if json_match:
+                analysis = json.loads(json_match.group(1))
+            else:
+                raise ValueError(f"Could not parse JSON from response: {response_text[:200]}")
         
         return analysis
     
@@ -133,7 +143,7 @@ Generate a complete ONE-PAGE resume with these sections:
 
 Format as clean, structured text suitable for PDF conversion. Be ruthlessly concise to fit one page."""
 
-        message = self.client.messages.create(
+        message = await self.client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=2000,  # Reduced since we need concise one-page content
             messages=[{"role": "user", "content": prompt}]
@@ -292,11 +302,42 @@ Return ONLY valid JSON, no other text."""
         import pdfplumber
         
         with pdfplumber.open(file_path) as pdf:
-            full_text = "\n".join([page.extract_text() for page in pdf.pages])
+            full_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
         
-        # Use same structuring approach as DOCX
-        # (Implementation similar to parse_docx)
-        pass
+        # Use Claude to structure the parsed text
+        client = anthropic.Anthropic()
+        
+        prompt = f"""Parse this resume into structured JSON format with these fields:
+- contact_info: {{name, email, phone, linkedin, location}}
+- summary: professional summary text
+- experience: [{{company, title, dates, responsibilities: []}}]
+- education: [{{degree, institution, dates}}]
+- skills: [skill list]
+- additional_sections: {{section_name: content}}
+
+Resume text:
+{full_text}
+
+Return ONLY valid JSON, no other text."""
+
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        response_text = message.content[0].text
+        try:
+            resume_dict = json.loads(response_text)
+        except json.JSONDecodeError:
+            import re
+            json_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', response_text)
+            if json_match:
+                resume_dict = json.loads(json_match.group(1))
+            else:
+                raise ValueError(f"Could not parse resume JSON from response")
+        
+        return ResumeData(**resume_dict)
 
 
 class ResumeTailorCoordinator:
@@ -452,7 +493,7 @@ class ResumeTailorCoordinator:
         summary_lines = [
             "# Resume Tailoring Summary\n",
             f"**Master Resume**: {self.resume_path.name}",
-            f"**Date**: {Path.cwd()}",
+            f"**Date**: {date.today().isoformat()}",
             f"**Total Resumes Generated**: {sum(len(r) for r in results.values())}\n",
             "## Categories Processed\n"
         ]

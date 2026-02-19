@@ -29,7 +29,7 @@ Perfect for job seekers applying to multiple roles across different specializati
 
 1. **Download this skill**:
    ```bash
-   git clone https://github.com/YOUR-USERNAME/resume-tailor-skill.git
+   git clone https://github.com/platonic-canine-lover/resume-tailor-skill.git
    cd resume-tailor-skill
    ```
 
